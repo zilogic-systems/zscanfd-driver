@@ -38,6 +38,10 @@ pub(crate) const GS_CAN_FLAG_FD: u8 = 1 << 1;
 pub(crate) const GS_CAN_FLAG_BRS: u8 = 1 << 2;
 pub(crate) const GS_CAN_FLAG_ESI: u8 = 1 << 3;
 
+// gs_host frame sizes
+const GS_HOST_FRAME_WITH_TIME_STAMP_SIZE: u32 = 80;
+const GS_HOST_FRAME_WITHOUT_TIME_STAMP_SIZE: u32 = 76;
+
 #[repr(u8)]
 #[derive(Debug)]
 pub(crate) enum UsbBreq {
@@ -173,12 +177,24 @@ pub(crate) struct HostFrame {
     pub reserved: u8,
 
     pub data: [u8; 64],
-}
+
+    pub timestamp_us: u32,
+} // Size of HostFrame struct is 80
 impl HostFrame {
     pub(crate) fn from_le_bytes(bs: &[u8]) -> HostFrame {
         let mut data: [u8; 64] = [0u8; 64];
+        let mut timestamp_us: u32 = 0;
         // copy data bytes to array
-        data[..(bs.len() - 12)].clone_from_slice(&bs[12..]);
+        match bs.len() as u32 {
+           GS_HOST_FRAME_WITHOUT_TIME_STAMP_SIZE => data[..(bs.len() - 12)].clone_from_slice(&bs[12..]),
+           GS_HOST_FRAME_WITH_TIME_STAMP_SIZE    => {
+                                                        // The range from 12 to 76 is 64; adding the values from 12 through 75
+                                                        data[..(bs.len() - 16)].clone_from_slice(&bs[12..76]);
+                                                        // copy the timstamp from buff
+                                                        timestamp_us = u32_from_le_bytes(&bs[76..]);
+                                                    },
+           _                                     => todo!(), // Gs host frame Unknown size
+        };
         HostFrame {
             echo_id: u32_from_le_bytes(&bs[0..4]),
             can_id: u32_from_le_bytes(&bs[4..8]),
@@ -187,6 +203,7 @@ impl HostFrame {
             flags: bs[10],
             reserved: bs[11],
             data,
+            timestamp_us,
         }
     }
     pub(crate) fn to_le_bytes(&self) -> Vec<u8> {

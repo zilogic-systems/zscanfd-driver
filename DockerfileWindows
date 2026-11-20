@@ -1,0 +1,92 @@
+FROM mcr.microsoft.com/windows/servercore:ltsc2025
+
+SHELL ["powershell", "-NoLogo", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+RUN $SSL_CA_OUTPUT_FILE=('{0}\roots.sst' -f $env:TMP); \
+    certutil.exe -generateSSTFromWU $SSL_CA_OUTPUT_FILE; \
+    certutil.exe -addstore -f Root $SSL_CA_OUTPUT_FILE | Out-Null; \
+    Remove-Item $SSL_CA_OUTPUT_FILE -Force;
+
+RUN $pyEnvScriptDownloadUrl='https://raw.githubusercontent.com/pyenv-win/pyenv-win/master/pyenv-win/install-pyenv-win.ps1'; \
+    $pyEnvScript=('{0}\Downloads\install-pyenv-win.ps1' -f $env:USERPROFILE); \
+    \
+    Invoke-WebRequest -Uri $pyEnvScriptDownloadUrl -OutFile $pyEnvScript -UseBasicParsing; \
+    Invoke-Expression -Command $pyEnvScript; \
+    Write-Host "Installed pyenv";
+
+ENV PYENV_SCRIPT_PATH='C:/Users/ContainerAdministrator/Downloads/install-pyenv-win.ps1'
+ENV PYENV_ROOT='C:/Users/ContainerAdministrator/.pyenv/pyenv-win'
+
+ARG PYTHON_VERSIONS='3.10 3.11 3.12 3.13 3.14'
+
+ENV PYTHON_VERSIONS=$PYTHON_VERSIONS
+
+RUN $PYTHON_VERSIONS_ARR=($env:PYTHON_VERSIONS -Split ' '); \
+    $env:PATH=('{0}/shims;{1}' -f $env:PYENV_ROOT, $env:PATH); \
+    $env:PATH=('{0}/bin;{1}' -f $env:PYENV_ROOT, $env:PATH); \
+    foreach ($VERSION in $PYTHON_VERSIONS_ARR) { \
+        pyenv install -s $VERSION; \
+        Write-Host ('Installed Python {0} version' -f $VERSION); \
+    };
+
+ENV VS_BUILDTOOLS_HOME=C:/BuildTools
+
+ARG MSVS_COMPONENTS='VC.Tools.x86.x64 Windows11SDK.22621 DriverTools.Community'
+
+ENV MSVS_COMPONENTS=$MSVS_COMPONENTS
+
+RUN $VS_BUILDTOOLS_URL='https://aka.ms/vs/17/release/vs_buildtools.exe'; \
+    Write-Host ('Downloading {0} ...' -f $VS_BUILDTOOLS_URL); \
+    $VS_BUILDTOOLS_EXECUTABLE=('{0}\vs_buildtools.exe' -f $env:TMP); \
+    Invoke-WebRequest -Uri $VS_BUILDTOOLS_URL -OutFile $VS_BUILDTOOLS_EXECUTABLE; \
+    \
+    Write-Host ('Installing specific Visual Studio components: {0} (This might takes a while)' -f ($env:MSVS_COMPONENTS.Split(' ') -join ', ')); \
+    $COMPONENT_ARGS=('--add Microsoft.VisualStudio.Component.{0}' -f ($env:MSVS_COMPONENTS.Split(' ') -join ' --add Microsoft.VisualStudio.Component.')); \
+    $BASE_ARGS=('--quiet --wait --norestart --nocache --installPath {0}' -f $env:VS_BUILDTOOLS_HOME); \
+    $INSTALL_ARGS=('{0} {1}' -f $BASE_ARGS, $COMPONENT_ARGS); \
+    Start-Process -FilePath $VS_BUILDTOOLS_EXECUTABLE -ArgumentList $INSTALL_ARGS -Wait -PassThru; \
+    \
+    Remove-Item $VS_BUILDTOOLS_EXECUTABLE -Force; \
+    Remove-Item -Path ('{0}\*' -f $env:TMP) -Recurse -Force;
+
+RUN $RUSTUP_INIT_URL = 'https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe'; \
+    $RUSTUP_INIT_EXECUTABLE=('{0}\rustup-init.exe' -f $env:TMP); \
+    Write-Host ('Downloading {0} ...' -f $RUSTUP_INIT_URL); \
+    Invoke-WebRequest -Uri $RUSTUP_INIT_URL -OutFile $RUSTUP_INIT_EXECUTABLE; \
+    \
+    Write-Host 'Installing Rust with MSVC toolchain...'; \
+    $BASE_ARGS='-y --default-toolchain stable-x86_64-pc-windows-msvc'; \
+    Start-Process -FilePath $RUSTUP_INIT_EXECUTABLE -ArgumentList $BASE_ARGS -Wait -PassThru; \
+    \
+    Remove-Item $RUSTUP_INIT_EXECUTABLE -Force;
+
+RUN $gitForWindowsReleaseUrl='https://api.github.com/repos/git-for-windows/git/releases/latest'; \
+    $gitForWindowsRelease=Invoke-RestMethod -Uri ('{0}' -f $gitForWindowsReleaseUrl); \
+    $gitForWindowsReleaseVersion=$gitForWindowsRelease.tag_name; \
+    Write-Output ('Latest Git for Windows version: {0}' -f $gitForWindowsReleaseVersion); \
+    \
+    $gitForWindowsReleaseAsset=($gitForWindowsRelease.assets | Where-Object { $_.name -like '*64-bit.exe' }); \
+    $gitForWindowsReleaseDownloadUrl=$gitForWindowsReleaseAsset.browser_download_url; \
+    Write-Output ('Download URL: {0}' -f $gitForWindowsReleaseDownloadUrl); \
+    \
+    $gitInstaller=('{0}\git-installer.exe' -f $env:TMP); \
+    Invoke-WebRequest -Uri $gitForWindowsReleaseAsset.browser_download_url -OutFile $gitInstaller; \
+    Start-Process -FilePath $gitInstaller -ArgumentList '/VERYSILENT','/NORESTART' -Wait -PassThru; \
+    Write-Host "Installed git.exe"; \
+    \
+    Remove-Item $gitInstaller -Force;
+
+ENV GIT_HOME='C:/Program Files/Git/bin'
+ENV BASH_TOOLS_HOME='C:/Program Files/Git/usr/bin'
+ENV VCPKG_ROOT="C:/vcpkg"
+
+RUN $env:PATH=('{0};{1}' -f $env:PATH, $env:GIT_HOME); \
+    $env:PATH=('{0};{1}' -f $env:PATH, $env:BASH_TOOLS_HOME); \
+    $vcpkgRepoUrl='https://github.com/microsoft/vcpkg.git'; \
+    Start-Process -FilePath 'git.exe' -ArgumentList 'clone',('{0}' -f $vcpkgRepoUrl),$env:VCPKG_ROOT -Wait -PassThru; \
+    Write-Output ('Cloned vcpkg from {0}' -f $vcpkgRepoUrl);
+
+RUN C:/vcpkg/bootstrap-vcpkg.bat; \
+    $env:PATH=('{0};{1}' -f $env:PATH, $env:VCPKG_ROOT); \
+    Start-Process -FilePath 'vcpkg.exe' -ArgumentList 'integrate','install' -Wait -PassThru; \
+    Write-Host "Ran vcpkg.exe integrate install";

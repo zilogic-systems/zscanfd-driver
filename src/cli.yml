@@ -1,7 +1,7 @@
 name: can
-version: "0.1.2"
-author: Eric Evenchick <eric@evenchick.com>
-about:  Command line utilities for CANtact devices
+version: "0.2.0"
+author: Zilogic Systems <code@zilogic.com>
+about:  Command line utilities for zscanfd devices
 args:
     - verbose:
         long: verbose

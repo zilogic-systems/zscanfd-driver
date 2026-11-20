@@ -1,5 +1,5 @@
 use crate::Error;
-use cantact::{Frame, Interface};
+use zscanfd::{Frame, Interface};
 use clap::ArgMatches;
 use log::info;
 use std::thread;
@@ -36,7 +36,7 @@ pub fn cmd(matches: &ArgMatches) -> Result<(), Error> {
     i.start(ch.unwrap(), move |_: Frame| {}).expect("failed to start device");
 
     let mut count = 0;
-    let mut f = cantact::Frame { can_dlc: 8, ..Default::default() };
+    let mut f = zscanfd::Frame { can_dlc: 8, ..Default::default() };
     loop {
         f.can_id = count % 0x800;
         i.send(f.clone()).unwrap();

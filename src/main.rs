@@ -1,4 +1,4 @@
-use cantact::Error as DevError;
+use zscanfd::Error as DevError;
 use clap::load_yaml;
 use clap::App;
 use simplelog::*;

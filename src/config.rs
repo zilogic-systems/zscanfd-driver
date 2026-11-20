@@ -1,6 +1,6 @@
 use crate::Error;
 use app_dirs::*;
-use cantact::{Channel, Interface};
+use zscanfd::{Channel, Interface};
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -12,10 +12,10 @@ use std::fs::File;
 use std::path::Path;
 
 const APP_INFO: AppInfo = AppInfo {
-    name: "cantact",
-    author: "Linklayer",
+    name: "zscanfd",
+    author: "zilogic",
 };
-const CFG_FILE: &str = "cantact.toml";
+const CFG_FILE: &str = "zscanfd.toml";
 const DEFAULT_CONFIG: Channel = Channel {
     bitrate: 500_000,
     data_bitrate: 500_000,

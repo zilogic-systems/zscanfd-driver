@@ -2,18 +2,18 @@
 # coding: utf-8
 
 """
-Python CANtact dump example.
+Python zscanfd dump example.
 
-A simple example of dumping frames to stdout using the cantact module.
+A simple example of dumping frames to stdout using the zscanfd module.
 
 Note, most users will want to use the python-can package instead
 of direct access! See send_one.py for an example.
 """
 
-import cantact
+import zscanfd
 
 # create the interface
-intf = cantact.Interface()
+intf = zscanfd.Interface()
 
 # set the CAN bitrate
 intf.set_bitrate(0, 500000)

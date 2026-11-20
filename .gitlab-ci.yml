@@ -1,41 +1,79 @@
 stages:
-  - build
+  - clippy-check
+  - build-libs
+  - archive-libs-package
+  - build-dumptool-windows
+  - archive-dumptool-windows
+  - build-python-libs
+  - archive-python-libs
   - archive-package
+  - publish
+  - release
 
-.artifacts_template:
+.artifacts_template_debug_libs_windows:
+  artifacts:
+    name: debug_libs
+    paths:
+      - driver/src/c/zs_canfd.h
+      - target/debug/zscanfd.dll
+      - target/debug/zscanfd.dll.lib
+      - target/debug/zscanfd.dll.exp
+      - target/debug/zscanfd.pdb
+    expire_in: 15 minutes
+
+.artifacts_template_release_libs_windows:
+  artifacts:
+    name: release_libs
+    paths:
+      - driver/src/c/zs_canfd.h
+      - target/release/zscanfd.dll
+      - target/release/zscanfd.dll.lib
+    expire_in: 15 minutes
+
+.artifacts_template_debug_and_release_libs_windows:
+  artifacts:
+    name: debug_and_release_libs
+    paths:
+      - driver/src/c/zs_canfd.h
+      # Debug artifacts
+      - target/debug/zscanfd.dll
+      - target/debug/zscanfd.dll.lib
+      - target/debug/zscanfd.dll.exp
+      - target/debug/zscanfd.pdb
+      # Release artifacts
+      - target/release/zscanfd.dll
+      - target/release/zscanfd.dll.lib
+    expire_in: 15 minutes
+
+.artifacts_template_for_python:
   artifacts:
     name: wheels
     paths:
-      - driver/dist/cantact-*.whl
+      - driver/dist/zscanfd-*.whl
+    expire_in: 1 hour
+
+.artifacts_template_dumptool_windows:
+  artifacts:
+    name: executable
+    paths:
+      - target/release/can.exe
     expire_in: 15 minutes
 
-build-linux:
-  stage: build
-  image: $PYIMAGE
+clippy:
+  stage: clippy-check
+  tags:
+    - cloud
+  image: rust:slim-trixie
   script:
-    - apt update
-    - apt install -y gcc curl libusb-1.0-0-dev pkg-config
-    - curl -o rust.sh --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs
-    - sh ./rust.sh -y
-    - source "$HOME/.cargo/env"
-    - rustup install nightly
-    - pip install -r driver/requirements.txt
-    - rustup override set nightly
-    - cd driver
-    - python setup.py bdist_wheel
-  extends: .artifacts_template
-  parallel:
-    matrix:
-      - PYIMAGE:
-          - "python:3.9-slim-bullseye"
-          - "python:3.10-slim-bullseye"
-          - "python:3.11-slim-bullseye"
-          - "python:3.12-slim-bullseye"
+    - apt-get update && apt-get install -y libusb-1.0-0-dev pkg-config
+    - rustup component add clippy
+    - cargo clippy --all-targets --all-features -- -D warnings
 
-.build-windows:
-  # It would be possible if we have windows
-  stage: build
-  image: $PYIMAGE
+build-libs-debug-windows:
+  stage: build-libs
+  tags:
+    - windows-shell
+  image: "windows-base-image-with-python"
   script:
     - curl https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe -o rustup-init.exe
     - ./rustup-init.exe -y
@@ -43,27 +81,211 @@ build-linux:
     - cd vcpkg
     - .\bootstrap-vcpkg.bat
     - .\vcpkg integrate install
-    - .\vcpkg install libusb
+    - .\vcpkg install libusb:x64-windows-static-md
     - rustup install nightly
-    - pip install -r driver/requirements.txt
-    - rustup override set nightly
+    - cd ..
     - cd driver
-    - python setup.py bdist_wheel
-  extends: .artifacts_template
+    - cargo build
+  extends:
+    - .artifacts_template_debug_libs_windows
+
+build-libs-release-windows:
+  stage: build-libs
+  tags:
+    - windows-shell
+  image: "windows-base-image-with-python"
+  script:
+    - curl https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe -o rustup-init.exe
+    - ./rustup-init.exe -y
+    - git clone https://github.com/Microsoft/vcpkg.git
+    - cd vcpkg
+    - .\bootstrap-vcpkg.bat
+    - .\vcpkg integrate install
+    - .\vcpkg install libusb:x64-windows-static-md
+    - rustup install nightly
+    - cd ..
+    - cd driver
+    - cargo build --release
+  extends:
+    - .artifacts_template_release_libs_windows
+
+package-libs:
+  tags:
+    - cloud
+  stage: archive-libs-package
+  image: debian:trixie-slim
+  script:
+    - echo "Packaging lib files (*.dll, *.dll.lib, etc...)"
+  extends:
+    - .artifacts_template_debug_and_release_libs_windows
+  artifacts:
+    expire_in: never
+
+build-windows-dumptool:
+  stage: build-dumptool-windows
+  tags:
+    - Windows10-docker
+  image: navinkumarj/pyenv-py3-9-to-py3-13:wsc-25_msvc_rust-git_vcpkg
+  script:
+    - $env:PATH="$env:PATH;$env:VCPKG_ROOT"
+    - netsh winhttp reset proxy
+    - vcpkg install libusb:x64-windows-static-md
+    - cargo build --release
+  extends:
+    - .artifacts_template_dumptool_windows
+
+package-dumptool-windows:
+  tags:
+    - cloud
+  stage: archive-dumptool-windows
+  needs:
+    - build-windows-dumptool
+  script:
+    - echo "Packaging can.exe used to cli can dump in windows"
+  extends:
+    - .artifacts_template_dumptool_windows
+  artifacts:
+    expire_in: never
+
+build-python-libs-linux:
+  stage: build-python-libs
+  tags:
+    - cloud
   parallel:
     matrix:
-      - PYIMAGE:
-          - "python:3.9-windowsservercore-ltsc2022"
-          - "python:3.10-windowsservercore-ltsc2022"
-          - "python:3.11-windowsservercore-ltsc2022"
-          - "python:3.12-windowsservercore-ltsc2022"
+      - PYTHON_VERSION:
+        - "3.10"
+        - "3.11"
+        - "3.12"
+  image: repo.zilogic.com:5050/engg/zs/zs-products/zs-cantact-pro/driver
+  script:
+    - apt-get update
+    - apt-get install -y libusb-1.0-0-dev pkg-config
+    - rustup install nightly
+    - pyenv global $PYTHON_VERSION
+    - python --version
+    - pip install -r driver/requirements.txt
+    - pip install build
+    - cd driver
+    - rustup override set nightly
+    - python -m build --wheel --outdir dist
+  extends:
+    - .artifacts_template_for_python
 
-package:
-  stage: archive-package
+build-python-libs-windows:
+  stage: build-python-libs
+  tags:
+    - Windows10-docker
+  parallel:
+    matrix:
+      - PYTHON_VERSION:
+        - "3.10"
+        - "3.11"
+        - "3.12"
+  image: navinkumarj/pyenv-py3-9-to-py3-13:wsc-25_msvc_rust-git_vcpkg
+  script:
+    - netsh winhttp reset proxy
+    - rustup install nightly
+    - $env:PATH=('{0};{1}' -f $env:PATH, $env:VCPKG_ROOT)
+    - vcpkg install libusb:x64-windows-static-md
+    - $env:PATH=('{0};{1}' -f $env:PATH, $env:GIT_HOME)
+    - $env:PATH=('{0};{1}' -f $env:PATH, $env:BASH_TOOLS_HOME)
+    - pyenv global $PYTHON_VERSION
+    - python --version
+    - pip install -r driver/requirements.txt
+    - pip install build
+    - cd driver
+    - rustup override set nightly
+    - python -m build --wheel --outdir dist
+  extends:
+    - .artifacts_template_for_python
+
+package-python:
+  tags:
+    - cloud
+  stage: archive-python-libs
+  image: debian:trixie-slim
   script:
     - echo "Packaging wheel files"
   needs:
-    - build-linux
-  extends: .artifacts_template
+    - build-python-libs-linux
+    - build-python-libs-windows
+  extends:
+    - .artifacts_template_for_python
   artifacts:
     expire_in: never
+
+
+archive-all-artifacts:
+  tags:
+    - cloud
+  stage: archive-package
+  image: debian:trixie-slim
+  script:
+    - apt-get update
+    - apt-get install -y zip
+    - echo "Packaging artifacts"
+    - mkdir zscanfd-package
+    - cd zscanfd-package
+    - mkdir wheels debug release src
+    - cp ../driver/dist/zscanfd-*.whl wheels/
+    - cp ../driver/src/c/zs_canfd.h src/
+    - cp ../target/debug/* debug/
+    - cp ../target/release/* release/
+    - cd ..
+    - zip -r zscanfd-package.zip zscanfd-package
+  needs:
+    - package-libs
+    - package-python
+  artifacts:
+    name: zscanfd-package
+    paths:
+      - zscanfd-package.zip
+    expire_in: never
+
+publish_package:
+  tags:
+    - cloud
+  stage: publish
+  image: debian:trixie-slim
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  needs:
+    - job: archive-all-artifacts
+      artifacts: true
+  script:
+    - VERSION="$CI_COMMIT_TAG"
+    - PACKAGE_REGISTRY_UPLOAD_PATH="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/zs-can-fd/driver/$VERSION/zscanfd-package.zip"
+    - apt-get update
+    - apt-get install -y python3-pip curl
+    - pip3 install zdeb-utils --break-system-packages
+    - zdeb-utils -a download -k "$ENGG_PKG_REGISTRY_KEY" -r engg/packages -p workdrive-sync -v __latest__ -f workdrive-sync.deb
+    - apt-get install ./workdrive-sync.deb -y
+    # Upload to Zoho Workdrive
+    # TODO: Change the folder name 'zs-cantact-pro' to 'zs-can-fd'
+    - workdrive-sync -t world -r engg/zs/zs-cantact-pro/driver/current/ zscanfd-package.zip
+    - workdrive-sync -t world -r engg/zs/zs-cantact-pro/driver/$VERSION/ zscanfd-package.zip
+
+    # Upload to GitLab Package Registry
+    - curl --header "JOB-TOKEN:$CI_JOB_TOKEN" --upload-file zscanfd-package.zip "$PACKAGE_REGISTRY_UPLOAD_PATH"
+
+create_release:
+  tags:
+    - cloud
+  stage: release
+  image: debian:trixie-slim
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  needs:
+    - publish_package
+  script:
+    - VERSION="$CI_COMMIT_TAG"
+    - RELEASE_PATH="$CI_API_V4_URL/projects/$CI_PROJECT_ID/releases/$VERSION"
+    - apt-get update
+    - apt-get install -y curl
+
+    # URL for the file inside GitLab's Package Registry
+    - PACKAGE_URL="$CI_PROJECT_URL/-/packages/generic/zs-can-fd/driver/$VERSION/zscanfd-package.zip"
+
+    # Create release and add the package as an asset to the release
+    - curl --request POST --header "JOB-TOKEN:$CI_JOB_TOKEN" --data "name=zscanfd-package.zip" --data "url=$PACKAGE_URL" "$RELEASE_PATH"

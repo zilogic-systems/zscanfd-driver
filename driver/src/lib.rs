@@ -1,8 +1,8 @@
-//! This crate provides a userspace driver for the CANtact family of
+//! This crate provides a userspace driver for the zscanfd family of
 //! Controller Area Network (CAN) devices.
 //!
 //! The rust library provided by this crate can be used directly to build
-//! applications for CANtact. The crate also provides bindings for other
+//! applications for zscanfd. The crate also provides bindings for other
 //! langauges.
 
 #![warn(missing_docs)]
@@ -18,7 +18,6 @@ use crossbeam_channel::RecvError;
 use serde::{Deserialize, Serialize};
 
 mod device;
-use device::gsusb::*;
 use device::*;
 
 pub mod c;
@@ -92,8 +91,11 @@ pub struct Frame {
     /// Remote Transmission Request (RTR) flag.
     pub rtr: bool,
 
-    /// Timestamp when frame was received
-    pub timestamp: Option<time::Duration>,
+    /// Timestamp when frame was received updated by internal std::time
+    pub sw_timestamp: Option<time::Duration>,
+
+    /// Timestamp when frame was received updated by gs_host frame
+    pub hw_timestamp: u32,
 }
 
 impl default::Default for Frame {
@@ -111,7 +113,8 @@ impl default::Default for Frame {
             brs: false,
             esi: false,
             err: false,
-            timestamp: None,
+            sw_timestamp: None,
+            hw_timestamp: 0,
         }
     }
 }
@@ -151,6 +154,7 @@ impl Frame {
             can_dlc: self.can_dlc,
             channel: self.channel,
             data: self.data_as_array(),
+            timestamp_us: self.hw_timestamp,
         }
     }
 
@@ -182,7 +186,8 @@ impl Frame {
             brs,
             esi,
             err,
-            timestamp: None,
+            sw_timestamp: None,
+            hw_timestamp: hf.timestamp_us,
         }
     }
 
@@ -222,7 +227,7 @@ pub struct Channel {
 
 }
 
-/// Interface for interacting with CANtact devices
+/// Interface for interacting with zscanfd devices
 pub struct Interface {
     dev: Device,
     running: Arc<RwLock<bool>>,
@@ -255,6 +260,49 @@ impl Interface {
     /// libusb. If no device is found, Error::DeviceNotFound is returned.
     pub fn new() -> Result<Interface, Error> {
         let mut dev = match Device::new(UsbContext::new()) {
+            Ok(d) => d,
+            Err(_) => return Err(Error::DeviceNotFound),
+        };
+
+        let dev_config = dev.get_device_config()?;
+        let bt_consts = dev.get_bit_timing_consts()?;
+
+        let channel_count = dev_config.icount as usize;
+
+        let mut channels = Vec::new();
+        // note: channel_count is zero indexed
+        for _ in 0..(channel_count + 1) {
+            channels.push(Channel {
+                bitrate: 0,
+                enabled: true,
+                loopback: false,
+                monitor: false,
+                fd: false,
+                data_bitrate: 0,
+                started: false,
+            });
+        }
+
+        let i = Interface {
+            dev,
+            running: Arc::new(RwLock::from(false)),
+
+            channel_count,
+            can_clock: bt_consts.fclk_can,
+            sw_version: dev_config.sw_version,
+            hw_version: dev_config.hw_version,
+            features: bt_consts.feature,
+
+            channels,
+        };
+
+        Ok(i)
+    }
+
+    /// Creates a new interface. This always selects by device serial number
+    /// found by libusb. If no device is found, Error::DeviceNotFound is returned.
+    pub fn new_with_device_serial_number(dev_serial_num: String) -> Result<Interface, Error> {
+        let mut dev = match Device::new_with_device_serial_number(UsbContext::new(), dev_serial_num) {
             Ok(d) => d,
             Err(_) => return Err(Error::DeviceNotFound),
         };
@@ -355,7 +403,7 @@ impl Interface {
                     match can_rx.recv() {
                         Ok(hf) => {
                             let mut f = Frame::from_host_frame(hf);
-                            f.timestamp = Some(time::Instant::now().duration_since(start_time));
+                            f.sw_timestamp = Some(time::Instant::now().duration_since(start_time));
                             rx_callback(f)
                         }
                         Err(RecvError) => {

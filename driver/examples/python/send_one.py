@@ -3,19 +3,19 @@
 
 """
 This example shows how sending a single message works using the python-can
-package with CANtact.
+package with zscanfd.
 """
 
 from __future__ import print_function
 
 import can
-import cantact
+import zscanfd
 
 
 def send_one():
 
     bus = can.interface.Bus(
-        bustype="cantact", channel="0", bitrate=500000, monitor=False
+        bustype="zscanfd", channel="0", bitrate=500000, monitor=False
     )
 
     msg = can.Message(

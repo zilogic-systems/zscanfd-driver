@@ -8,7 +8,7 @@ from udsoncan.services import *
 
 udsoncan.setup_logging()
 
-bus = can.interface.Bus(bustype="cantact", channel="0", bitrate=500000)
+bus = can.interface.Bus(bustype="zscanfd", channel="0", bitrate=500000)
 addr = isotp.Address(
     addressing_mode=isotp.AddressingMode.Normal_11bits, txid=0x123, rxid=0x456
 )

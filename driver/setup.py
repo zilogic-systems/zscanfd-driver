@@ -22,14 +22,14 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setup(
-    name="cantact",
-    version="0.1.3",
-    author="Eric Evenchick",
-    author_email="eric@evenchick.com",
-    description="Support for the CANtact Controller Area Network Devices",
+    name="zscanfd",
+    version="0.2.0",
+    author="Zilogic Systems",
+    author_email="code@zilogic.com",
+    description="Support for the zs-canfd Controller Area Network Devices",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/linklayer/cantact",
+    url="https://github.com/zilogic-systems/zscanfd-driver",
     classifiers=[
         "License :: OSI Approved :: MIT License",
         "Development Status :: 3 - Alpha",
@@ -43,8 +43,8 @@ setup(
         "Topic :: System :: Networking",
         "Topic :: Software Development :: Embedded Systems",
     ],
-    packages=["cantact"],
-    rust_extensions=[RustExtension("cantact.cantact", features=["python"],)],
+    packages=["zscanfd"],
+    rust_extensions=[RustExtension("zscanfd.zscanfd", features=["python"],)],
     install_requires=install_requires,
     setup_requires=setup_requires,
     python_requires=">=3.5",

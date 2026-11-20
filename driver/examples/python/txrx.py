@@ -1,5 +1,5 @@
 import argparse
-import cantact
+import zscanfd
 from typing import List, Dict, Tuple, Optional, Union, NamedTuple
 
 
@@ -9,41 +9,41 @@ class CANInterfaceSingleton:
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
             super().__new__(cls, *args, **kwargs)
-            cls._instance = cantact.Interface()
+            cls._instance = zscanfd.Interface()
         return cls._instance
 
 
 class CANTransmitter:
 
     def __init__(self, device_id: int):
-        self.cantact_interface = CANInterfaceSingleton()
+        self.zs_canfd_interface = CANInterfaceSingleton()
         self.device_id = device_id
         self.tx_count = 0
 
     def start(self, arbitration_speed: int, data_speed: Optional[int] = None):
-        self.cantact_interface.stop(self.device_id)
-        self.cantact_interface.set_bitrate(self.device_id, arbitration_speed)
+        self.zs_canfd_interface.stop(self.device_id)
+        self.zs_canfd_interface.set_bitrate(self.device_id, arbitration_speed)
         if data_speed is not None:
-            self.cantact_interface.set_data_bitrate(self.device_id, data_speed)
-        self.cantact_interface.set_enabled(self.device_id, True)
-        self.cantact_interface.start(self.device_id)
+            self.zs_canfd_interface.set_data_bitrate(self.device_id, data_speed)
+        self.zs_canfd_interface.set_enabled(self.device_id, True)
+        self.zs_canfd_interface.start(self.device_id)
 
     def stop(self):
-        self.cantact_interface.stop(self.device_id)
-        self.cantact_interface.set_enabled(self.device_id, False)
-        self.cantact_interface.start(self.device_id)
+        self.zs_canfd_interface.stop(self.device_id)
+        self.zs_canfd_interface.set_enabled(self.device_id, False)
+        self.zs_canfd_interface.start(self.device_id)
 
     def send(self, tx_data: List[int], arbitration: int = 0x01B, fd: bool = False, brs: bool = False):
         self.tx_count += 1
-        self.cantact_interface.send_fd(self.device_id, arbitration, False, False, fd, brs, len(tx_data), tx_data)
+        self.zs_canfd_interface.send_fd(self.device_id, arbitration, False, False, fd, brs, len(tx_data), tx_data)
         print(self.tx_count)
 
     def recv(self):
-        self.cantact_interface.recv(self.device_id)
+        self.zs_canfd_interface.recv(self.device_id)
 
 
 if "__main__" == __name__:
-    arg_parser = argparse.ArgumentParser(prog="python txrx.py", description="Transmit CAN message using cantact across channels")
+    arg_parser = argparse.ArgumentParser(prog="python txrx.py", description="Transmit CAN message using zscanfd across channels")
     arg_parser.add_argument("data", nargs="+", type=int, help="Data to be transmitted in CAN")
     arg_parser.add_argument("-t", "--tx-channel", nargs="?", type=int, default=0)
     arg_parser.add_argument("-r", "--rx-channel", nargs="?", type=int, default=1)

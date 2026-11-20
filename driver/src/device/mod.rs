@@ -14,7 +14,10 @@ use std::thread;
 pub mod gsusb;
 pub(crate) use gsusb::*;
 
-// CANtact USB VID / PID
+pub mod libusb_helper;
+pub use libusb_helper::LibUsbHelperDevice;
+
+// zscanfd USB VID / PID
 const USB_VID: u16 = 0x1d50;
 const USB_PID: u16 = 0x606f;
 
@@ -23,7 +26,7 @@ const CTRL_BUF_SIZE: usize = 64;
 // number of bulk in transfers
 const BULK_IN_TRANSFER_COUNT: usize = 32;
 // buffer size for bulk in transfer
-const BULK_IN_BUF_SIZE: usize = 76;
+const BULK_IN_BUF_SIZE: usize = 80;
 // timeout for bulk in transfers
 const BULK_IN_TIMEOUT_MS: u32 = 5000;
 
@@ -120,6 +123,68 @@ extern "system" fn bulk_in_cb(xfer: *mut libusb_transfer) {
 impl Device {
     pub(crate) fn new(ctx: UsbContext) -> Result<Device, Error> {
         let hnd = unsafe { libusb_open_device_with_vid_pid(ctx.as_ptr(), USB_VID, USB_PID) };
+        if hnd.is_null() {
+            return Err(Error::DeviceNotFound);
+        }
+
+        match unsafe { libusb_detach_kernel_driver(hnd, 0) } {
+            LIBUSB_SUCCESS => {}
+            LIBUSB_ERROR_NOT_FOUND => { /* device already disconnected */ }
+            LIBUSB_ERROR_NOT_SUPPORTED => { /* can't detach on this system (not linux) */ }
+            e => return Err(Error::Libusb("libusb_detach_kernel_driver", e)),
+        }
+
+        match unsafe { libusb_claim_interface(hnd, 0) } {
+            LIBUSB_SUCCESS => {}
+            e => return Err(Error::Libusb("libusb_claim_interface", e)),
+        }
+
+        let ctrl_transfer = unsafe { libusb_alloc_transfer(0) };
+        if ctrl_transfer.is_null() {
+            return Err(Error::TransferAllocFailed);
+        }
+
+        let in_bufs: [[u8; BULK_IN_BUF_SIZE]; BULK_IN_TRANSFER_COUNT] =
+            [[0u8; BULK_IN_BUF_SIZE]; BULK_IN_TRANSFER_COUNT];
+
+        let (send, recv) = unbounded();
+
+        let d = Device {
+            ctx: Arc::new(ctx),
+            hnd: unsafe { ptr::NonNull::new_unchecked(hnd) },
+            running: Arc::new(AtomicBool::new(true)),
+
+            ctrl_transfer: unsafe { ptr::NonNull::new_unchecked(ctrl_transfer) },
+            ctrl_buf: [0u8; CTRL_BUF_SIZE],
+            ctrl_transfer_pending: RwLock::from(false),
+
+            out_transfer: unsafe { ptr::NonNull::new_unchecked(ctrl_transfer) },
+            out_buf: vec![],
+            out_transfer_pending: RwLock::from(false),
+
+            in_transfers: [ptr::null_mut(); BULK_IN_TRANSFER_COUNT],
+            in_bufs,
+
+            can_rx_send: send,
+            can_rx_recv: recv,
+        };
+
+        // start the libusb event thread
+        let ctx = d.ctx.clone();
+        let running = d.running.clone();
+        thread::spawn(move || {
+            while running.load(Ordering::SeqCst) {
+                unsafe {
+                    libusb_handle_events(ctx.as_ptr());
+                }
+            }
+        });
+
+        Ok(d)
+    }
+
+    pub(crate) fn new_with_device_serial_number(ctx: UsbContext, dev_serial_num: String) -> Result<Device, Error> {
+        let hnd = LibUsbHelperDevice::new(ctx.as_ptr(), USB_VID, USB_PID, dev_serial_num).open_device_with_vid_pid_serial();
         if hnd.is_null() {
             return Err(Error::DeviceNotFound);
         }
